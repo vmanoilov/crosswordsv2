@@ -1,6 +1,6 @@
-// Glassmorphism Button Component
+// Enhanced Glassmorphism Button Component
 import React from 'react';
-import { TouchableOpacity, Text, StyleSheet, ViewStyle, TextStyle } from 'react-native';
+import { TouchableOpacity, Text, StyleSheet, ViewStyle, TextStyle, View } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -11,6 +11,7 @@ interface GlassButtonProps {
   textStyle?: TextStyle;
   selected?: boolean;
   disabled?: boolean;
+  icon?: React.ReactNode;
 }
 
 export const GlassButton: React.FC<GlassButtonProps> = ({ 
@@ -20,26 +21,38 @@ export const GlassButton: React.FC<GlassButtonProps> = ({
   textStyle,
   selected = false,
   disabled = false,
+  icon,
 }) => {
   return (
     <TouchableOpacity 
       onPress={onPress} 
-      style={[styles.container, selected && styles.selected, style]}
+      style={[
+        styles.container, 
+        selected && styles.selected, 
+        disabled && styles.disabled,
+        style
+      ]}
       disabled={disabled}
       activeOpacity={0.7}
     >
-      <BlurView intensity={selected ? 50 : 30} tint="dark" style={styles.blur}>
+      <BlurView intensity={selected ? 40 : 25} tint="dark" style={styles.blur}>
         <LinearGradient
           colors={
             selected 
-              ? ['rgba(100,200,255,0.3)', 'rgba(100,150,255,0.15)'] 
-              : ['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.05)']
+              ? ['rgba(139, 92, 246, 0.35)', 'rgba(99, 102, 241, 0.2)'] 
+              : ['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.03)']
           }
           start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
+          end={{ x: 0, y: 1 }}
           style={styles.gradient}
         >
-          <Text style={[styles.text, selected && styles.selectedText, textStyle]}>
+          {icon && <View style={styles.iconContainer}>{icon}</View>}
+          <Text style={[
+            styles.text, 
+            selected && styles.selectedText,
+            disabled && styles.disabledText,
+            textStyle
+          ]}>
             {title}
           </Text>
         </LinearGradient>
@@ -50,32 +63,44 @@ export const GlassButton: React.FC<GlassButtonProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    borderRadius: 16,
+    borderRadius: 14,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    minHeight: 50,
+    borderColor: 'rgba(255,255,255,0.1)',
+    minHeight: 48,
   },
   selected: {
-    borderColor: 'rgba(100,200,255,0.5)',
+    borderColor: 'rgba(139, 92, 246, 0.4)',
+  },
+  disabled: {
+    opacity: 0.5,
   },
   blur: {
     flex: 1,
   },
   gradient: {
     flex: 1,
+    flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  iconContainer: {
+    marginRight: 4,
   },
   text: {
-    color: 'rgba(255,255,255,0.9)',
-    fontSize: 16,
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 14,
     fontWeight: '600',
     textAlign: 'center',
   },
   selectedText: {
     color: '#fff',
+    fontWeight: '700',
+  },
+  disabledText: {
+    color: 'rgba(255,255,255,0.4)',
   },
 });

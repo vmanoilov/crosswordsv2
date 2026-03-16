@@ -1,9 +1,10 @@
-// Crossword Grid Component
+// Enhanced Crossword Grid Component
 import React, { useRef, useCallback } from 'react';
 import { View, StyleSheet, Dimensions, TextInput, ScrollView } from 'react-native';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import { CrosswordPuzzle, Cell } from '../types';
 import { CrosswordCell } from './CrosswordCell';
-import { GlassCard } from './GlassCard';
 
 interface CrosswordGridProps {
   puzzle: CrosswordPuzzle;
@@ -22,9 +23,10 @@ export const CrosswordGrid: React.FC<CrosswordGridProps> = ({
 }) => {
   const inputRefs = useRef<Map<string, React.RefObject<TextInput>>>(new Map());
   const screenWidth = Dimensions.get('window').width;
-  const gridPadding = 20;
+  const gridPadding = 24;
   const gridSize = puzzle.grid.width;
-  const cellSize = Math.floor((screenWidth - gridPadding * 2 - 40) / gridSize);
+  const maxGridWidth = screenWidth - gridPadding * 2 - 32;
+  const cellSize = Math.floor(maxGridWidth / gridSize);
 
   const getInputRef = useCallback((row: number, col: number) => {
     const key = `${row}-${col}`;
@@ -71,15 +73,22 @@ export const CrosswordGrid: React.FC<CrosswordGridProps> = ({
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContainer}
       >
-        <GlassCard style={styles.gridContainer}>
-          <View style={styles.grid}>
-            {puzzle.grid.cells.map((row, rowIndex) => (
-              <View key={rowIndex} style={styles.row}>
-                {row.map((cell, colIndex) => renderCell(cell, rowIndex, colIndex))}
+        <View style={styles.gridWrapper}>
+          <BlurView intensity={20} tint="dark" style={styles.gridBlur}>
+            <LinearGradient
+              colors={['rgba(255,255,255,0.08)', 'rgba(255,255,255,0.02)']}
+              style={styles.gridGradient}
+            >
+              <View style={styles.grid}>
+                {puzzle.grid.cells.map((row, rowIndex) => (
+                  <View key={rowIndex} style={styles.row}>
+                    {row.map((cell, colIndex) => renderCell(cell, rowIndex, colIndex))}
+                  </View>
+                ))}
               </View>
-            ))}
-          </View>
-        </GlassCard>
+            </LinearGradient>
+          </BlurView>
+        </View>
       </ScrollView>
     </ScrollView>
   );
@@ -91,7 +100,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  gridContainer: {
+  gridWrapper: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  gridBlur: {
+    flex: 1,
+  },
+  gridGradient: {
     padding: 8,
   },
   grid: {

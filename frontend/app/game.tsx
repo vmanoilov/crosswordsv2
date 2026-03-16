@@ -1,5 +1,5 @@
-// Игра Кръстословица - Game Screen
-import React, { useState, useEffect, useCallback } from 'react';
+// Игра Кръстословица - Game Screen с Save/Resume и Glassmorphism
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,10 +8,11 @@ import {
   StatusBar,
   TouchableOpacity,
   Alert,
-  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -23,10 +24,17 @@ import { GlassButton } from '../src/components/GlassButton';
 import { GlassCard } from '../src/components/GlassCard';
 import { generateCrossword, checkSolution, getWordCells } from '../src/engine/crosswordEngine';
 import { CrosswordPuzzle, PlacedWord, GameSettings } from '../src/types';
+import {
+  saveGame,
+  loadSavedGame,
+  deleteSavedGame,
+  updateGameStats,
+  formatTime,
+} from '../src/services/gameStorage';
 
 export default function GameScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ size: string; difficulty: string }>();
+  const params = useLocalSearchParams<{ size: string; difficulty: string; resume: string }>();
   
   const [puzzle, setPuzzle] = useState<CrosswordPuzzle | null>(null);
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
@@ -36,47 +44,93 @@ export default function GameScreen() {
   const [isComplete, setIsComplete] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showClues, setShowClues] = useState(true);
+  const [settings, setSettings] = useState<GameSettings>({
+    size: 'medium',
+    difficulty: 'medium',
+  });
+  
+  const appState = useRef(AppState.currentState);
 
-  // Generate puzzle on mount
+  // Load or generate puzzle on mount
   useEffect(() => {
-    const settings: GameSettings = {
-      size: (params.size as 'small' | 'medium' | 'large') || 'medium',
-      difficulty: (params.difficulty as 'easy' | 'medium' | 'hard') || 'medium',
+    const initGame = async () => {
+      const gameSettings: GameSettings = {
+        size: (params.size as 'small' | 'medium' | 'large') || 'medium',
+        difficulty: (params.difficulty as 'easy' | 'medium' | 'hard') || 'medium',
+      };
+      setSettings(gameSettings);
+
+      // Check if resuming
+      if (params.resume === 'true') {
+        const savedGame = await loadSavedGame();
+        if (savedGame) {
+          setPuzzle(savedGame.puzzle);
+          setElapsedTime(savedGame.elapsedTime);
+          return;
+        }
+      }
+
+      // Generate new puzzle
+      const newPuzzle = generateCrossword(gameSettings);
+      setPuzzle(newPuzzle);
+      
+      // Delete any old saved game when starting new
+      await deleteSavedGame();
     };
-    const newPuzzle = generateCrossword(settings);
-    setPuzzle(newPuzzle);
-  }, [params.size, params.difficulty]);
+
+    initGame();
+  }, [params.size, params.difficulty, params.resume]);
+
+  // Auto-save when app goes to background
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => {
+      subscription.remove();
+    };
+  }, [puzzle, elapsedTime, settings]);
+
+  const handleAppStateChange = async (nextAppState: AppStateStatus) => {
+    if (appState.current === 'active' && nextAppState.match(/inactive|background/)) {
+      // App is going to background - save game
+      if (puzzle && !isComplete) {
+        await saveGame(puzzle, settings, elapsedTime);
+      }
+    }
+    appState.current = nextAppState;
+  };
 
   // Timer
   useEffect(() => {
-    if (isComplete) return;
+    if (isComplete || !puzzle) return;
     
     const timer = setInterval(() => {
       setElapsedTime(t => t + 1);
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [isComplete]);
+  }, [isComplete, puzzle]);
 
-  // Format time
-  const formatTime = (seconds: number): string => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+  // Auto-save every 30 seconds
+  useEffect(() => {
+    if (!puzzle || isComplete) return;
+
+    const autoSave = setInterval(async () => {
+      await saveGame(puzzle, settings, elapsedTime);
+    }, 30000);
+
+    return () => clearInterval(autoSave);
+  }, [puzzle, settings, elapsedTime, isComplete]);
 
   // Handle cell press
   const handleCellPress = useCallback((row: number, col: number) => {
     if (!puzzle || puzzle.grid.cells[row][col].isBlocked) return;
 
-    // If same cell, toggle direction
     if (selectedCell?.row === row && selectedCell?.col === col) {
       const newDirection = selectedDirection === 'across' ? 'down' : 'across';
       setSelectedDirection(newDirection);
       const cells = getWordCells(puzzle, row, col, newDirection);
       setHighlightedCells(cells);
       
-      // Find the clue for this word
       const clue = puzzle.placedWords.find(w => {
         if (w.direction !== newDirection) return false;
         const wordCells = getWordCells(puzzle, w.startRow, w.startCol, w.direction);
@@ -88,7 +142,6 @@ export default function GameScreen() {
       const cells = getWordCells(puzzle, row, col, selectedDirection);
       setHighlightedCells(cells);
       
-      // Find the clue for this word
       const clue = puzzle.placedWords.find(w => {
         if (w.direction !== selectedDirection) return false;
         const wordCells = getWordCells(puzzle, w.startRow, w.startCol, w.direction);
@@ -108,7 +161,7 @@ export default function GameScreen() {
       const newCells = prev.grid.cells.map((r, ri) =>
         r.map((c, ci) => {
           if (ri === row && ci === col) {
-            return { ...c, userInput: value };
+            return { ...c, userInput: value, isCorrect: null };
           }
           return c;
         })
@@ -123,7 +176,7 @@ export default function GameScreen() {
       };
     });
 
-    // Auto-advance to next cell if value entered
+    // Auto-advance to next cell
     if (value && selectedCell) {
       const cells = highlightedCells;
       const currentIndex = cells.findIndex(c => c.row === row && c.col === col);
@@ -147,17 +200,16 @@ export default function GameScreen() {
   }, [puzzle]);
 
   // Check solution
-  const handleCheckSolution = useCallback(() => {
+  const handleCheckSolution = useCallback(async () => {
     if (!puzzle) return;
 
-    // Update cells with correct/incorrect status
     setPuzzle(prev => {
       if (!prev) return prev;
       
       const newCells = prev.grid.cells.map((row) =>
         row.map((cell) => {
-          if (cell.isBlocked) return cell;
-          const isCorrect = cell.userInput.toUpperCase() === cell.letter;
+          if (cell.isBlocked || !cell.letter) return cell;
+          const isCorrect = cell.userInput.toUpperCase() === cell.letter.toUpperCase();
           return { ...cell, isCorrect };
         })
       );
@@ -174,8 +226,11 @@ export default function GameScreen() {
     const complete = checkSolution(puzzle);
     if (complete) {
       setIsComplete(true);
+      await deleteSavedGame();
+      await updateGameStats(true, elapsedTime);
+      
       Alert.alert(
-        'Поздравления!',
+        '🎉 Поздравления!',
         `Решихте кръстословицата за ${formatTime(elapsedTime)}!`,
         [{ text: 'Благодаря', style: 'default' }]
       );
@@ -198,7 +253,7 @@ export default function GameScreen() {
         {
           text: 'Покажи',
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
             if (!puzzle) return;
             
             setPuzzle(prev => {
@@ -221,25 +276,60 @@ export default function GameScreen() {
             });
             
             setIsComplete(true);
+            await deleteSavedGame();
+            await updateGameStats(false, elapsedTime);
           },
         },
       ]
     );
-  }, [puzzle]);
+  }, [puzzle, elapsedTime]);
 
-  // Go back
-  const handleBack = () => {
+  // Save and go back
+  const handleBack = async () => {
+    if (puzzle && !isComplete) {
+      await saveGame(puzzle, settings, elapsedTime);
+    }
     router.back();
   };
+
+  // Clear current word
+  const handleClearWord = useCallback(() => {
+    if (!puzzle || highlightedCells.length === 0) return;
+
+    setPuzzle(prev => {
+      if (!prev) return prev;
+      
+      const newCells = prev.grid.cells.map((row, ri) =>
+        row.map((cell, ci) => {
+          const isInWord = highlightedCells.some(c => c.row === ri && c.col === ci);
+          if (isInWord) {
+            return { ...cell, userInput: '', isCorrect: null };
+          }
+          return cell;
+        })
+      );
+
+      return {
+        ...prev,
+        grid: {
+          ...prev.grid,
+          cells: newCells,
+        },
+      };
+    });
+  }, [puzzle, highlightedCells]);
 
   if (!puzzle) {
     return (
       <View style={styles.loadingContainer}>
         <LinearGradient
-          colors={['#0f0c29', '#302b63', '#24243e']}
+          colors={['#0a0a1a', '#1a1a3a', '#0f0f2a']}
           style={styles.background}
         />
-        <Text style={styles.loadingText}>Генериране на кръстословица...</Text>
+        <BlurView intensity={30} tint="dark" style={styles.loadingCard}>
+          <Ionicons name="grid" size={40} color="rgba(139, 92, 246, 0.9)" />
+          <Text style={styles.loadingText}>Генериране на кръстословица...</Text>
+        </BlurView>
       </View>
     );
   }
@@ -250,13 +340,23 @@ export default function GameScreen() {
       
       {/* Background */}
       <LinearGradient
-        colors={['#0f0c29', '#302b63', '#24243e']}
+        colors={['#0a0a1a', '#1a1a3a', '#0f0f2a', '#151530']}
         style={styles.background}
       />
       
-      {/* Decorative circles */}
-      <View style={styles.circle1} />
-      <View style={styles.circle2} />
+      {/* Decorative orbs */}
+      <View style={styles.orb1}>
+        <LinearGradient
+          colors={['rgba(99, 102, 241, 0.25)', 'rgba(139, 92, 246, 0.1)']}
+          style={styles.orbGradient}
+        />
+      </View>
+      <View style={styles.orb2}>
+        <LinearGradient
+          colors={['rgba(236, 72, 153, 0.2)', 'rgba(244, 114, 182, 0.08)']}
+          style={styles.orbGradient}
+        />
+      </View>
 
       <SafeAreaView style={styles.safeArea}>
         <KeyboardAvoidingView 
@@ -265,22 +365,29 @@ export default function GameScreen() {
         >
           {/* Header */}
           <View style={styles.header}>
-            <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-              <BlurView intensity={30} tint="dark" style={styles.backBlur}>
-                <Ionicons name="arrow-back" size={24} color="#fff" />
+            <TouchableOpacity onPress={handleBack} style={styles.headerButton}>
+              <BlurView intensity={30} tint="dark" style={styles.headerButtonBlur}>
+                <Ionicons name="arrow-back" size={22} color="#fff" />
               </BlurView>
             </TouchableOpacity>
             
-            <GlassCard style={styles.timerCard}>
-              <Ionicons name="time-outline" size={18} color="rgba(100,200,255,0.9)" />
-              <Text style={styles.timerText}>{formatTime(elapsedTime)}</Text>
-            </GlassCard>
+            <View style={styles.timerContainer}>
+              <BlurView intensity={30} tint="dark" style={styles.timerBlur}>
+                <LinearGradient
+                  colors={['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.03)']}
+                  style={styles.timerGradient}
+                >
+                  <Ionicons name="time-outline" size={16} color="rgba(34, 211, 238, 0.9)" />
+                  <Text style={styles.timerText}>{formatTime(elapsedTime)}</Text>
+                </LinearGradient>
+              </BlurView>
+            </View>
             
-            <TouchableOpacity onPress={() => setShowClues(!showClues)} style={styles.toggleButton}>
-              <BlurView intensity={30} tint="dark" style={styles.backBlur}>
+            <TouchableOpacity onPress={() => setShowClues(!showClues)} style={styles.headerButton}>
+              <BlurView intensity={30} tint="dark" style={styles.headerButtonBlur}>
                 <Ionicons 
                   name={showClues ? "list" : "grid"} 
-                  size={24} 
+                  size={22} 
                   color="#fff" 
                 />
               </BlurView>
@@ -289,12 +396,24 @@ export default function GameScreen() {
 
           {/* Selected Clue Display */}
           {selectedClue && (
-            <GlassCard style={styles.selectedClueCard}>
-              <Text style={styles.selectedClueNumber}>
-                {selectedClue.number}. {selectedClue.direction === 'across' ? 'Хоризонтално' : 'Вертикално'}
-              </Text>
-              <Text style={styles.selectedClueText}>{selectedClue.clue}</Text>
-            </GlassCard>
+            <View style={styles.selectedClueContainer}>
+              <BlurView intensity={25} tint="dark" style={styles.selectedClueBlur}>
+                <LinearGradient
+                  colors={['rgba(255,255,255,0.08)', 'rgba(255,255,255,0.02)']}
+                  style={styles.selectedClueGradient}
+                >
+                  <View style={styles.selectedClueHeader}>
+                    <View style={styles.clueNumberBadge}>
+                      <Text style={styles.clueNumberText}>{selectedClue.number}</Text>
+                    </View>
+                    <Text style={styles.selectedClueDirection}>
+                      {selectedClue.direction === 'across' ? 'Хоризонтално' : 'Вертикално'}
+                    </Text>
+                  </View>
+                  <Text style={styles.selectedClueText}>{selectedClue.clue}</Text>
+                </LinearGradient>
+              </BlurView>
+            </View>
           )}
 
           {/* Main Content */}
@@ -327,16 +446,31 @@ export default function GameScreen() {
 
           {/* Action Buttons */}
           <View style={styles.actionButtons}>
-            <GlassButton
-              title="Провери"
-              onPress={handleCheckSolution}
-              style={styles.actionButton}
-            />
-            <GlassButton
-              title="Решение"
-              onPress={handleRevealSolution}
-              style={styles.actionButton}
-            />
+            <TouchableOpacity style={styles.actionButton} onPress={handleClearWord}>
+              <BlurView intensity={25} tint="dark" style={styles.actionBlur}>
+                <Ionicons name="backspace-outline" size={20} color="rgba(255,255,255,0.8)" />
+                <Text style={styles.actionText}>Изчисти</Text>
+              </BlurView>
+            </TouchableOpacity>
+            
+            <TouchableOpacity style={[styles.actionButton, styles.checkButton]} onPress={handleCheckSolution}>
+              <BlurView intensity={30} tint="dark" style={styles.actionBlur}>
+                <LinearGradient
+                  colors={['rgba(34, 211, 238, 0.3)', 'rgba(56, 189, 248, 0.15)']}
+                  style={styles.actionGradient}
+                >
+                  <Ionicons name="checkmark-circle" size={20} color="#fff" />
+                  <Text style={styles.checkText}>Провери</Text>
+                </LinearGradient>
+              </BlurView>
+            </TouchableOpacity>
+            
+            <TouchableOpacity style={styles.actionButton} onPress={handleRevealSolution}>
+              <BlurView intensity={25} tint="dark" style={styles.actionBlur}>
+                <Ionicons name="eye-outline" size={20} color="rgba(255,255,255,0.8)" />
+                <Text style={styles.actionText}>Решение</Text>
+              </BlurView>
+            </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -353,10 +487,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  loadingCard: {
+    padding: 32,
+    borderRadius: 20,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
   loadingText: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
+    marginTop: 16,
   },
   background: {
     position: 'absolute',
@@ -365,23 +507,26 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
   },
-  circle1: {
+  orb1: {
     position: 'absolute',
     width: 200,
     height: 200,
     borderRadius: 100,
-    backgroundColor: 'rgba(100, 200, 255, 0.1)',
     top: -50,
     right: -50,
+    overflow: 'hidden',
   },
-  circle2: {
+  orb2: {
     position: 'absolute',
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-    backgroundColor: 'rgba(200, 100, 255, 0.08)',
+    width: 160,
+    height: 160,
+    borderRadius: 80,
     bottom: 100,
-    left: -30,
+    left: -40,
+    overflow: 'hidden',
+  },
+  orbGradient: {
+    flex: 1,
   },
   safeArea: {
     flex: 1,
@@ -394,20 +539,27 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 10,
   },
-  backButton: {
-    borderRadius: 12,
+  headerButton: {
+    borderRadius: 14,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
-  backBlur: {
-    padding: 10,
+  headerButtonBlur: {
+    padding: 12,
   },
-  toggleButton: {
-    borderRadius: 12,
+  timerContainer: {
+    borderRadius: 16,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
-  timerCard: {
+  timerBlur: {
+    flex: 1,
+  },
+  timerGradient: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
@@ -420,16 +572,41 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
-  selectedClueCard: {
+  selectedClueContainer: {
     marginHorizontal: 16,
     marginBottom: 12,
-    padding: 12,
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
-  selectedClueNumber: {
-    color: 'rgba(100,200,255,0.9)',
-    fontSize: 12,
+  selectedClueBlur: {
+    flex: 1,
+  },
+  selectedClueGradient: {
+    padding: 14,
+  },
+  selectedClueHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+  },
+  clueNumberBadge: {
+    backgroundColor: 'rgba(139, 92, 246, 0.3)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  clueNumberText: {
+    color: '#fff',
+    fontSize: 14,
     fontWeight: '700',
-    marginBottom: 4,
+  },
+  selectedClueDirection: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 12,
+    fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 1,
   },
@@ -452,9 +629,38 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    gap: 12,
+    gap: 10,
   },
   actionButton: {
     flex: 1,
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  checkButton: {
+    borderColor: 'rgba(34, 211, 238, 0.3)',
+  },
+  actionBlur: {
+    flex: 1,
+  },
+  actionGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    gap: 8,
+  },
+  actionText: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+    paddingVertical: 14,
+  },
+  checkText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

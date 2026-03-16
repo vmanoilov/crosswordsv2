@@ -102,10 +102,10 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: Bulgarian Crossword Puzzle App - Dynamic crossword generation with glassmorphism UI, all text in Bulgarian, variable sizes (Small/Medium/Large) and difficulties (Easy/Medium/Hard)
+user_problem_statement: Bulgarian Crossword Puzzle App with save/resume, expanded dictionary, and modern glassmorphism UI
 
 frontend:
-  - task: "Home Screen with Glassmorphism UI"
+  - task: "Enhanced Glassmorphism Home Screen"
     implemented: true
     working: true
     file: "/app/frontend/app/index.tsx"
@@ -115,9 +115,33 @@ frontend:
     status_history:
       - working: true
         agent: "main"
-        comment: "Home screen implemented with BlurView glassmorphism, gradient backgrounds, size and difficulty selection buttons. All text in Bulgarian."
+        comment: "Redesigned with animated floating orbs, enhanced BlurView effects, gradient backgrounds, stats panel, and saved game card. All Bulgarian text."
 
-  - task: "Crossword Generation Engine"
+  - task: "Save/Resume Game Functionality"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/services/gameStorage.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "AsyncStorage-based save/resume system. Auto-saves every 30 seconds and when app goes to background. Shows saved game card on home screen with resume/delete options."
+
+  - task: "Game Statistics Tracking"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/services/gameStorage.ts"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Tracks games played, games completed, total time, and best time. Shows stats panel on home screen."
+
+  - task: "CSP Crossword Generation Engine"
     implemented: true
     working: true
     file: "/app/frontend/src/engine/crosswordEngine.ts"
@@ -127,9 +151,9 @@ frontend:
     status_history:
       - working: true
         agent: "main"
-        comment: "Procedural crossword generation algorithm implemented. Places words with grid-intersection logic, numbers cells, generates across/down clues."
+        comment: "Completely rewritten with CSP (Constraint Satisfaction Problem) algorithm, 180-degree rotational symmetry, backtracking, slot-based word placement. American-style crossword rules."
 
-  - task: "Bulgarian Dictionary"
+  - task: "Expanded Bulgarian Dictionary"
     implemented: true
     working: true
     file: "/app/frontend/src/engine/bulgarianDictionary.ts"
@@ -139,9 +163,9 @@ frontend:
     status_history:
       - working: true
         agent: "main"
-        comment: "Bulgarian word dictionary with 90+ words across easy, medium, and hard difficulties. Each word has Bulgarian clue."
+        comment: "Expanded to 200+ Bulgarian words with verified spelling. Includes 3-letter to 12-letter words across easy/medium/hard difficulties. Categories: animals, food, science, professions, etc."
 
-  - task: "Game Screen"
+  - task: "Enhanced Game Screen"
     implemented: true
     working: true
     file: "/app/frontend/app/game.tsx"
@@ -151,43 +175,19 @@ frontend:
     status_history:
       - working: true
         agent: "main"
-        comment: "Game screen with crossword grid, clue list, timer, check solution, reveal solution features. All UI in Bulgarian."
-
-  - task: "Crossword Grid Component"
-    implemented: true
-    working: true
-    file: "/app/frontend/src/components/CrosswordGrid.tsx"
-    stuck_count: 0
-    priority: "high"
-    needs_retesting: false
-    status_history:
-      - working: true
-        agent: "main"
-        comment: "Interactive crossword grid with cell selection, highlighting, and input handling."
-
-  - task: "Clue List Component"
-    implemented: true
-    working: true
-    file: "/app/frontend/src/components/ClueList.tsx"
-    stuck_count: 0
-    priority: "medium"
-    needs_retesting: false
-    status_history:
-      - working: true
-        agent: "main"
-        comment: "Clue list displays Хоризонтално (Across) and Вертикално (Down) clues with selection highlighting."
+        comment: "Glassmorphism redesign with BlurView effects, gradient cells, animated orbs, clear word button, enhanced clue display with badges."
 
   - task: "Glassmorphism Components"
     implemented: true
     working: true
-    file: "/app/frontend/src/components/GlassCard.tsx, GlassButton.tsx"
+    file: "/app/frontend/src/components/*.tsx"
     stuck_count: 0
     priority: "medium"
     needs_retesting: false
     status_history:
       - working: true
         agent: "main"
-        comment: "Reusable glassmorphism components using expo-blur BlurView and expo-linear-gradient."
+        comment: "Enhanced GlassCard (variants: default/accent/subtle), GlassButton (with icons), ClueList (with section icons), CrosswordCell (gradient fills), CrosswordGrid (blur wrapper)."
 
 backend:
   - task: "Basic API Endpoints"
@@ -200,23 +200,23 @@ backend:
     status_history:
       - working: "NA"
         agent: "main"
-        comment: "Backend not required for this app - crossword generation is client-side. Default FastAPI endpoints remain."
+        comment: "Backend not required - all game logic is client-side. Default FastAPI endpoints remain for future expansion."
 
 metadata:
   created_by: "main_agent"
-  version: "1.0"
-  test_sequence: 1
+  version: "2.0"
+  test_sequence: 2
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Home Screen with Glassmorphism UI"
-    - "Crossword Generation Engine"
-    - "Game Screen"
+    - "Save/Resume Game Functionality"
+    - "Enhanced Glassmorphism Home Screen"
+    - "Enhanced Game Screen"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
   - agent: "main"
-    message: "Implemented complete Bulgarian crossword puzzle app with: 1) Procedural crossword generation engine 2) Bulgarian dictionary with 90+ words 3) Glassmorphism UI using expo-blur 4) Size selection (Малък/Среден/Голям) 5) Difficulty selection (Лесно/Средно/Трудно) 6) Game timer 7) Check and reveal solution features. All UI text is in Bulgarian. Screenshots verified both home and game screens working."
+    message: "Implemented major enhancements: 1) Save/resume with AsyncStorage - auto-saves every 30s and on background, shows saved game card 2) Expanded dictionary to 200+ Bulgarian words 3) Complete glassmorphism redesign with animated orbs, BlurView effects, gradients 4) Game stats tracking (games played/completed/best time) 5) Improved crossword engine with CSP algorithm and 180-degree symmetry."
