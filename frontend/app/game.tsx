@@ -1,4 +1,4 @@
-// Игра Кръстословица - Game Screen с Save/Resume и Glassmorphism
+// Игра Кръстословица - Game Screen с Sound Effects и Scoring System
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
@@ -18,10 +18,12 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { CrosswordGrid } from '../src/components/CrosswordGrid';
 import { ClueList } from '../src/components/ClueList';
 import { GlassButton } from '../src/components/GlassButton';
 import { GlassCard } from '../src/components/GlassCard';
+import { ScoreModal } from '../src/components/ScoreModal';
 import { generateCrossword, checkSolution, getWordCells } from '../src/engine/crosswordEngine';
 import { CrosswordPuzzle, PlacedWord, GameSettings } from '../src/types';
 import {
@@ -31,6 +33,41 @@ import {
   updateGameStats,
   formatTime,
 } from '../src/services/gameStorage';
+import {
+  calculateScore,
+  saveGameScore,
+  ScoreBreakdown,
+  GameScore,
+  getHighScores,
+} from '../src/services/scoringService';
+
+// Haptic feedback helper
+const playHaptic = async (type: 'light' | 'medium' | 'heavy' | 'success' | 'error' | 'warning') => {
+  try {
+    switch (type) {
+      case 'light':
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        break;
+      case 'medium':
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        break;
+      case 'heavy':
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        break;
+      case 'success':
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        break;
+      case 'error':
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        break;
+      case 'warning':
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        break;
+    }
+  } catch (error) {
+    // Haptics not available (web)
+  }
+};
 
 export default function GameScreen() {
   const router = useRouter();
@@ -49,6 +86,13 @@ export default function GameScreen() {
     difficulty: 'medium',
   });
   
+  // Scoring state
+  const [hintsUsed, setHintsUsed] = useState(0);
+  const [errorsCount, setErrorsCount] = useState(0);
+  const [showScoreModal, setShowScoreModal] = useState(false);
+  const [scoreBreakdown, setScoreBreakdown] = useState<ScoreBreakdown | null>(null);
+  const [isNewHighScore, setIsNewHighScore] = useState(false);
+  
   const appState = useRef(AppState.currentState);
 
   // Load or generate puzzle on mount
@@ -66,6 +110,7 @@ export default function GameScreen() {
         if (savedGame) {
           setPuzzle(savedGame.puzzle);
           setElapsedTime(savedGame.elapsedTime);
+          playHaptic('light');
           return;
         }
       }
@@ -76,6 +121,7 @@ export default function GameScreen() {
       
       // Delete any old saved game when starting new
       await deleteSavedGame();
+      playHaptic('medium');
     };
 
     initGame();
@@ -91,7 +137,6 @@ export default function GameScreen() {
 
   const handleAppStateChange = async (nextAppState: AppStateStatus) => {
     if (appState.current === 'active' && nextAppState.match(/inactive|background/)) {
-      // App is going to background - save game
       if (puzzle && !isComplete) {
         await saveGame(puzzle, settings, elapsedTime);
       }
@@ -125,6 +170,8 @@ export default function GameScreen() {
   const handleCellPress = useCallback((row: number, col: number) => {
     if (!puzzle || puzzle.grid.cells[row][col].isBlocked) return;
 
+    playHaptic('light');
+
     if (selectedCell?.row === row && selectedCell?.col === col) {
       const newDirection = selectedDirection === 'across' ? 'down' : 'across';
       setSelectedDirection(newDirection);
@@ -154,6 +201,8 @@ export default function GameScreen() {
   // Handle cell change
   const handleCellChange = useCallback((row: number, col: number, value: string) => {
     if (!puzzle) return;
+
+    playHaptic('light');
 
     setPuzzle(prev => {
       if (!prev) return prev;
@@ -191,6 +240,8 @@ export default function GameScreen() {
   const handleCluePress = useCallback((clue: PlacedWord) => {
     if (!puzzle) return;
     
+    playHaptic('medium');
+    
     setSelectedClue(clue);
     setSelectedDirection(clue.direction);
     setSelectedCell({ row: clue.startRow, col: clue.startCol });
@@ -199,9 +250,27 @@ export default function GameScreen() {
     setHighlightedCells(cells);
   }, [puzzle]);
 
+  // Count words found
+  const countWordsFound = useCallback((): number => {
+    if (!puzzle) return 0;
+    
+    let found = 0;
+    for (const word of puzzle.placedWords) {
+      const cells = getWordCells(puzzle, word.startRow, word.startCol, word.direction);
+      const isWordComplete = cells.every(({ row, col }) => {
+        const cell = puzzle.grid.cells[row][col];
+        return cell.userInput.toUpperCase() === cell.letter?.toUpperCase();
+      });
+      if (isWordComplete) found++;
+    }
+    return found;
+  }, [puzzle]);
+
   // Check solution
   const handleCheckSolution = useCallback(async () => {
     if (!puzzle) return;
+
+    let hasErrors = false;
 
     setPuzzle(prev => {
       if (!prev) return prev;
@@ -210,6 +279,7 @@ export default function GameScreen() {
         row.map((cell) => {
           if (cell.isBlocked || !cell.letter) return cell;
           const isCorrect = cell.userInput.toUpperCase() === cell.letter.toUpperCase();
+          if (!isCorrect && cell.userInput) hasErrors = true;
           return { ...cell, isCorrect };
         })
       );
@@ -223,31 +293,71 @@ export default function GameScreen() {
       };
     });
 
+    if (hasErrors) {
+      setErrorsCount(prev => prev + 1);
+    }
+
     const complete = checkSolution(puzzle);
     if (complete) {
+      playHaptic('success');
       setIsComplete(true);
       await deleteSavedGame();
       await updateGameStats(true, elapsedTime);
       
-      Alert.alert(
-        '🎉 Поздравления!',
-        `Решихте кръстословицата за ${formatTime(elapsedTime)}!`,
-        [{ text: 'Благодаря', style: 'default' }]
+      // Calculate score
+      const wordsFound = puzzle.placedWords.length;
+      const totalWords = puzzle.placedWords.length;
+      const breakdown = calculateScore(
+        settings,
+        elapsedTime,
+        wordsFound,
+        totalWords,
+        hintsUsed,
+        errorsCount
       );
+      
+      setScoreBreakdown(breakdown);
+      
+      // Check for high score
+      const highScores = await getHighScores();
+      const currentHigh = highScores[settings.difficulty][settings.size];
+      const isHighScore = !currentHigh || breakdown.totalScore > currentHigh.score;
+      setIsNewHighScore(isHighScore);
+      
+      // Save score
+      const gameScore: GameScore = {
+        id: Date.now().toString(),
+        score: breakdown.totalScore,
+        breakdown,
+        settings,
+        timeSeconds: elapsedTime,
+        wordsFound,
+        totalWords,
+        hintsUsed,
+        errorsCount,
+        completedAt: Date.now(),
+      };
+      await saveGameScore(gameScore);
+      
+      // Show score modal
+      setShowScoreModal(true);
     } else {
+      playHaptic('error');
       Alert.alert(
         'Не съвсем...',
         'Има грешни отговори. Опитайте отново!',
         [{ text: 'Добре', style: 'default' }]
       );
     }
-  }, [puzzle, elapsedTime]);
+  }, [puzzle, elapsedTime, settings, hintsUsed, errorsCount]);
 
-  // Reveal solution
+  // Reveal solution (hint)
   const handleRevealSolution = useCallback(() => {
+    playHaptic('warning');
+    
     Alert.alert(
       'Покажи решението?',
-      'Сигурни ли сте, че искате да видите отговорите?',
+      'Това ще намали резултата ви. Сигурни ли сте?',
       [
         { text: 'Отказ', style: 'cancel' },
         {
@@ -255,6 +365,8 @@ export default function GameScreen() {
           style: 'destructive',
           onPress: async () => {
             if (!puzzle) return;
+            
+            setHintsUsed(prev => prev + 1);
             
             setPuzzle(prev => {
               if (!prev) return prev;
@@ -275,17 +387,84 @@ export default function GameScreen() {
               };
             });
             
+            playHaptic('heavy');
             setIsComplete(true);
             await deleteSavedGame();
             await updateGameStats(false, elapsedTime);
+            
+            // Calculate score (with hint penalty)
+            const wordsFound = puzzle.placedWords.length;
+            const totalWords = puzzle.placedWords.length;
+            const breakdown = calculateScore(
+              settings,
+              elapsedTime,
+              wordsFound,
+              totalWords,
+              hintsUsed + 1,
+              errorsCount
+            );
+            
+            setScoreBreakdown(breakdown);
+            setIsNewHighScore(false);
+            
+            // Save score
+            const gameScore: GameScore = {
+              id: Date.now().toString(),
+              score: breakdown.totalScore,
+              breakdown,
+              settings,
+              timeSeconds: elapsedTime,
+              wordsFound,
+              totalWords,
+              hintsUsed: hintsUsed + 1,
+              errorsCount,
+              completedAt: Date.now(),
+            };
+            await saveGameScore(gameScore);
+            
+            setShowScoreModal(true);
           },
         },
       ]
     );
-  }, [puzzle, elapsedTime]);
+  }, [puzzle, elapsedTime, settings, hintsUsed, errorsCount]);
+
+  // Hint for current word only
+  const handleHintWord = useCallback(() => {
+    if (!puzzle || !selectedClue || highlightedCells.length === 0) {
+      Alert.alert('Изберете дума', 'Първо изберете дума от кръстословицата.');
+      return;
+    }
+    
+    playHaptic('medium');
+    setHintsUsed(prev => prev + 1);
+    
+    setPuzzle(prev => {
+      if (!prev) return prev;
+      
+      const newCells = prev.grid.cells.map((row, ri) =>
+        row.map((cell, ci) => {
+          const isInWord = highlightedCells.some(c => c.row === ri && c.col === ci);
+          if (isInWord && !cell.isBlocked) {
+            return { ...cell, userInput: cell.letter || '' };
+          }
+          return cell;
+        })
+      );
+
+      return {
+        ...prev,
+        grid: {
+          ...prev.grid,
+          cells: newCells,
+        },
+      };
+    });
+  }, [puzzle, selectedClue, highlightedCells]);
 
   // Save and go back
   const handleBack = async () => {
+    playHaptic('light');
     if (puzzle && !isComplete) {
       await saveGame(puzzle, settings, elapsedTime);
     }
@@ -295,6 +474,8 @@ export default function GameScreen() {
   // Clear current word
   const handleClearWord = useCallback(() => {
     if (!puzzle || highlightedCells.length === 0) return;
+
+    playHaptic('medium');
 
     setPuzzle(prev => {
       if (!prev) return prev;
@@ -318,6 +499,12 @@ export default function GameScreen() {
       };
     });
   }, [puzzle, highlightedCells]);
+
+  // New game from score modal
+  const handleNewGame = () => {
+    setShowScoreModal(false);
+    router.back();
+  };
 
   if (!puzzle) {
     return (
@@ -371,16 +558,28 @@ export default function GameScreen() {
               </BlurView>
             </TouchableOpacity>
             
-            <View style={styles.timerContainer}>
-              <BlurView intensity={30} tint="dark" style={styles.timerBlur}>
-                <LinearGradient
-                  colors={['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.03)']}
-                  style={styles.timerGradient}
-                >
-                  <Ionicons name="time-outline" size={16} color="rgba(34, 211, 238, 0.9)" />
-                  <Text style={styles.timerText}>{formatTime(elapsedTime)}</Text>
-                </LinearGradient>
-              </BlurView>
+            <View style={styles.headerCenter}>
+              <View style={styles.timerContainer}>
+                <BlurView intensity={30} tint="dark" style={styles.timerBlur}>
+                  <LinearGradient
+                    colors={['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.03)']}
+                    style={styles.timerGradient}
+                  >
+                    <Ionicons name="time-outline" size={16} color="rgba(34, 211, 238, 0.9)" />
+                    <Text style={styles.timerText}>{formatTime(elapsedTime)}</Text>
+                  </LinearGradient>
+                </BlurView>
+              </View>
+              
+              {/* Score indicator */}
+              <View style={styles.scoreIndicator}>
+                <BlurView intensity={25} tint="dark" style={styles.scoreBlur}>
+                  <Ionicons name="star" size={14} color="rgba(255, 215, 0, 0.8)" />
+                  <Text style={styles.scoreIndicatorText}>
+                    {countWordsFound()}/{puzzle.placedWords.length}
+                  </Text>
+                </BlurView>
+              </View>
             </View>
             
             <TouchableOpacity onPress={() => setShowClues(!showClues)} style={styles.headerButton}>
@@ -409,6 +608,9 @@ export default function GameScreen() {
                     <Text style={styles.selectedClueDirection}>
                       {selectedClue.direction === 'across' ? 'Хоризонтално' : 'Вертикално'}
                     </Text>
+                    <TouchableOpacity onPress={handleHintWord} style={styles.hintButton}>
+                      <Ionicons name="bulb-outline" size={18} color="rgba(255, 215, 0, 0.8)" />
+                    </TouchableOpacity>
                   </View>
                   <Text style={styles.selectedClueText}>{selectedClue.clue}</Text>
                 </LinearGradient>
@@ -448,8 +650,10 @@ export default function GameScreen() {
           <View style={styles.actionButtons}>
             <TouchableOpacity style={styles.actionButton} onPress={handleClearWord}>
               <BlurView intensity={25} tint="dark" style={styles.actionBlur}>
-                <Ionicons name="backspace-outline" size={20} color="rgba(255,255,255,0.8)" />
-                <Text style={styles.actionText}>Изчисти</Text>
+                <View style={styles.actionContent}>
+                  <Ionicons name="backspace-outline" size={20} color="rgba(255,255,255,0.8)" />
+                  <Text style={styles.actionText}>Изчисти</Text>
+                </View>
               </BlurView>
             </TouchableOpacity>
             
@@ -467,13 +671,28 @@ export default function GameScreen() {
             
             <TouchableOpacity style={styles.actionButton} onPress={handleRevealSolution}>
               <BlurView intensity={25} tint="dark" style={styles.actionBlur}>
-                <Ionicons name="eye-outline" size={20} color="rgba(255,255,255,0.8)" />
-                <Text style={styles.actionText}>Решение</Text>
+                <View style={styles.actionContent}>
+                  <Ionicons name="eye-outline" size={20} color="rgba(255,255,255,0.8)" />
+                  <Text style={styles.actionText}>Решение</Text>
+                </View>
               </BlurView>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
+
+      {/* Score Modal */}
+      <ScoreModal
+        visible={showScoreModal}
+        onClose={() => setShowScoreModal(false)}
+        onNewGame={handleNewGame}
+        scoreBreakdown={scoreBreakdown}
+        settings={settings}
+        timeSeconds={elapsedTime}
+        wordsFound={countWordsFound()}
+        totalWords={puzzle.placedWords.length}
+        isNewHighScore={isNewHighScore}
+      />
     </View>
   );
 }
@@ -550,6 +769,11 @@ const styles = StyleSheet.create({
   headerButtonBlur: {
     padding: 12,
   },
+  headerCenter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
   timerContainer: {
     borderRadius: 16,
     overflow: 'hidden',
@@ -563,14 +787,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
-    paddingHorizontal: 16,
-    gap: 8,
+    paddingHorizontal: 14,
+    gap: 6,
   },
   timerText: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
+  },
+  scoreIndicator: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 215, 0, 0.2)',
+  },
+  scoreBlur: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    gap: 4,
+  },
+  scoreIndicatorText: {
+    color: 'rgba(255, 215, 0, 0.9)',
+    fontSize: 13,
+    fontWeight: '700',
   },
   selectedClueContainer: {
     marginHorizontal: 16,
@@ -609,6 +851,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 1,
+    flex: 1,
+  },
+  hintButton: {
+    padding: 6,
+    backgroundColor: 'rgba(255, 215, 0, 0.1)',
+    borderRadius: 8,
   },
   selectedClueText: {
     color: '#fff',
@@ -644,6 +892,13 @@ const styles = StyleSheet.create({
   actionBlur: {
     flex: 1,
   },
+  actionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    gap: 6,
+  },
   actionGradient: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -655,8 +910,6 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.8)',
     fontSize: 13,
     fontWeight: '600',
-    textAlign: 'center',
-    paddingVertical: 14,
   },
   checkText: {
     color: '#fff',

@@ -27,6 +27,13 @@ import {
   GameStats,
   SavedGame,
 } from '../src/services/gameStorage';
+import {
+  getHighScores,
+  getTotalStats,
+  formatScore,
+  getGradeColor,
+  HighScores,
+} from '../src/services/scoringService';
 
 const { width, height } = Dimensions.get('window');
 
@@ -38,6 +45,8 @@ export default function HomeScreen() {
   });
   const [savedGame, setSavedGame] = useState<SavedGame | null>(null);
   const [gameStats, setGameStats] = useState<GameStats | null>(null);
+  const [highScores, setHighScores] = useState<HighScores | null>(null);
+  const [totalStats, setTotalStats] = useState<{ totalScore: number; averageScore: number; bestGrade: string } | null>(null);
   const [showStats, setShowStats] = useState(false);
 
   // Animated values for floating orbs
@@ -89,6 +98,12 @@ export default function HomeScreen() {
   const loadStats = async () => {
     const stats = await loadGameStats();
     setGameStats(stats);
+    
+    const scores = await getHighScores();
+    setHighScores(scores);
+    
+    const total = await getTotalStats();
+    setTotalStats(total);
   };
 
   const startNewGame = () => {
@@ -253,13 +268,23 @@ export default function HomeScreen() {
                   <Text style={styles.statLabel}>Завършени</Text>
                 </View>
                 <View style={styles.statItem}>
-                  <Ionicons name="time" size={20} color="rgba(236, 72, 153, 0.9)" />
+                  <Ionicons name="star" size={20} color="rgba(255, 215, 0, 0.9)" />
                   <Text style={styles.statValue}>
-                    {gameStats.bestTime ? formatTime(gameStats.bestTime) : '--:--'}
+                    {totalStats ? formatScore(totalStats.totalScore) : '0'}
                   </Text>
-                  <Text style={styles.statLabel}>Най-добро</Text>
+                  <Text style={styles.statLabel}>Общо точки</Text>
                 </View>
               </View>
+              
+              {/* Best grade */}
+              {totalStats && totalStats.bestGrade !== '-' && (
+                <View style={styles.bestGradeRow}>
+                  <Text style={styles.bestGradeLabel}>Най-добра оценка:</Text>
+                  <Text style={[styles.bestGradeValue, { color: getGradeColor(totalStats.bestGrade) }]}>
+                    {totalStats.bestGrade}
+                  </Text>
+                </View>
+              )}
             </GlassCard>
           )}
 
@@ -506,6 +531,24 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: 'rgba(255,255,255,0.5)',
     marginTop: 4,
+  },
+  bestGradeRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+    gap: 10,
+  },
+  bestGradeLabel: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.6)',
+  },
+  bestGradeValue: {
+    fontSize: 28,
+    fontWeight: '900',
   },
   savedGameCard: {
     marginBottom: 16,
