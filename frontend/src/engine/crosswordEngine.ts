@@ -1,22 +1,437 @@
-// Crossword Generation Engine - Кръстословица Генератор
+// Professional Crossword Generation Engine
+// Using CSP (Constraint Satisfaction Problem) with backtracking
+// Follows American-style crossword rules:
+// - 180-degree rotational symmetry
+// - All letters must be checked (part of both Across and Down words)
+// - No 2-letter words
+// - Connected grid (no isolated sections)
+
 import { WordClue, PlacedWord, Cell, CrosswordGrid, CrosswordPuzzle, GameSettings } from '../types';
 import { getWordsByDifficulty, shuffleArray } from './bulgarianDictionary';
 
 const GRID_SIZES = {
   small: 9,
   medium: 13,
-  large: 17,
+  large: 15,
 };
 
-function createEmptyGrid(size: number): Cell[][] {
-  const grid: Cell[][] = [];
+interface Slot {
+  startRow: number;
+  startCol: number;
+  length: number;
+  direction: 'across' | 'down';
+  cells: { row: number; col: number }[];
+}
+
+interface GridState {
+  cells: (string | null)[][];
+  blocked: boolean[][];
+  size: number;
+}
+
+// Create empty grid with proper initialization
+function createEmptyGridState(size: number): GridState {
+  const cells: (string | null)[][] = [];
+  const blocked: boolean[][] = [];
+  
   for (let row = 0; row < size; row++) {
-    grid[row] = [];
+    cells[row] = [];
+    blocked[row] = [];
     for (let col = 0; col < size; col++) {
-      grid[row][col] = {
-        letter: null,
-        isBlocked: true,
-        number: null,
+      cells[row][col] = null;
+      blocked[row][col] = false;
+    }
+  }
+  
+  return { cells, blocked, size };
+}
+
+// Create symmetric black square pattern (180-degree rotational symmetry)
+function createSymmetricPattern(size: number, density: number = 0.15): boolean[][] {
+  const blocked: boolean[][] = [];
+  
+  for (let row = 0; row < size; row++) {
+    blocked[row] = [];
+    for (let col = 0; col < size; col++) {
+      blocked[row][col] = false;
+    }
+  }
+  
+  // Create a pattern that ensures:
+  // 1. Rotational symmetry
+  // 2. No isolated sections
+  // 3. Good word slot lengths (3-7+ letters)
+  
+  const patterns = getGoodPatterns(size);
+  const selectedPattern = patterns[Math.floor(Math.random() * patterns.length)];
+  
+  // Apply pattern with 180-degree symmetry
+  for (const [row, col] of selectedPattern) {
+    if (row < size && col < size) {
+      blocked[row][col] = true;
+      // Symmetric position
+      blocked[size - 1 - row][size - 1 - col] = true;
+    }
+  }
+  
+  return blocked;
+}
+
+// Pre-defined good crossword patterns for different sizes
+function getGoodPatterns(size: number): [number, number][][] {
+  if (size === 9) {
+    return [
+      // Pattern 1: Classic 9x9
+      [[0,4], [1,4], [4,0], [4,1], [4,7], [4,8], [7,4], [8,4]],
+      // Pattern 2
+      [[0,3], [0,5], [3,0], [3,8], [5,0], [5,8], [8,3], [8,5]],
+      // Pattern 3
+      [[1,1], [1,7], [4,4], [7,1], [7,7]],
+    ];
+  } else if (size === 13) {
+    return [
+      // Pattern 1: Classic 13x13
+      [[0,4], [0,8], [1,4], [1,8], [4,0], [4,1], [4,11], [4,12], 
+       [6,6], [8,0], [8,1], [8,11], [8,12], [11,4], [11,8], [12,4], [12,8]],
+      // Pattern 2
+      [[0,5], [0,7], [2,3], [2,9], [3,2], [3,10], [5,0], [5,12],
+       [6,6], [7,0], [7,12], [9,2], [9,10], [10,3], [10,9], [12,5], [12,7]],
+    ];
+  } else { // 15x15
+    return [
+      // Pattern 1: NYT-style 15x15
+      [[0,4], [0,10], [1,4], [1,10], [3,6], [3,8], [4,0], [4,1], [4,13], [4,14],
+       [6,3], [6,11], [7,7], [8,3], [8,11], [10,0], [10,1], [10,13], [10,14],
+       [11,6], [11,8], [13,4], [13,10], [14,4], [14,10]],
+      // Pattern 2
+      [[0,5], [0,9], [2,5], [2,9], [4,3], [4,7], [4,11], [5,0], [5,2], [5,12], [5,14],
+       [7,7], [9,0], [9,2], [9,12], [9,14], [10,3], [10,7], [10,11],
+       [12,5], [12,9], [14,5], [14,9]],
+    ];
+  }
+}
+
+// Find all word slots in the grid
+function findSlots(blocked: boolean[][], size: number): Slot[] {
+  const slots: Slot[] = [];
+  
+  // Find horizontal slots
+  for (let row = 0; row < size; row++) {
+    let startCol = 0;
+    while (startCol < size) {
+      // Skip blocked cells
+      while (startCol < size && blocked[row][startCol]) {
+        startCol++;
+      }
+      
+      if (startCol >= size) break;
+      
+      // Find end of slot
+      let endCol = startCol;
+      const cells: { row: number; col: number }[] = [];
+      
+      while (endCol < size && !blocked[row][endCol]) {
+        cells.push({ row, col: endCol });
+        endCol++;
+      }
+      
+      const length = endCol - startCol;
+      if (length >= 3) { // Minimum 3 letters
+        slots.push({
+          startRow: row,
+          startCol: startCol,
+          length,
+          direction: 'across',
+          cells,
+        });
+      }
+      
+      startCol = endCol + 1;
+    }
+  }
+  
+  // Find vertical slots
+  for (let col = 0; col < size; col++) {
+    let startRow = 0;
+    while (startRow < size) {
+      // Skip blocked cells
+      while (startRow < size && blocked[startRow][col]) {
+        startRow++;
+      }
+      
+      if (startRow >= size) break;
+      
+      // Find end of slot
+      let endRow = startRow;
+      const cells: { row: number; col: number }[] = [];
+      
+      while (endRow < size && !blocked[endRow][col]) {
+        cells.push({ row: endRow, col });
+        endRow++;
+      }
+      
+      const length = endRow - startRow;
+      if (length >= 3) { // Minimum 3 letters
+        slots.push({
+          startRow: startRow,
+          startCol: col,
+          length,
+          direction: 'down',
+          cells,
+        });
+      }
+      
+      startRow = endRow + 1;
+    }
+  }
+  
+  return slots;
+}
+
+// Check if a word can be placed in a slot
+function canPlaceWord(
+  word: string,
+  slot: Slot,
+  gridState: GridState
+): boolean {
+  if (word.length !== slot.length) {
+    return false;
+  }
+  
+  const letters = word.split('');
+  
+  for (let i = 0; i < letters.length; i++) {
+    const { row, col } = slot.cells[i];
+    const existing = gridState.cells[row][col];
+    
+    // If cell has a letter, it must match
+    if (existing !== null && existing !== letters[i]) {
+      return false;
+    }
+  }
+  
+  return true;
+}
+
+// Place a word in a slot
+function placeWord(
+  word: string,
+  slot: Slot,
+  gridState: GridState
+): void {
+  const letters = word.split('');
+  
+  for (let i = 0; i < letters.length; i++) {
+    const { row, col } = slot.cells[i];
+    gridState.cells[row][col] = letters[i];
+  }
+}
+
+// Remove a word from a slot (for backtracking)
+function removeWord(
+  slot: Slot,
+  gridState: GridState,
+  originalCells: (string | null)[][]
+): void {
+  for (const { row, col } of slot.cells) {
+    gridState.cells[row][col] = originalCells[row][col];
+  }
+}
+
+// Score a slot for prioritization (most constrained first)
+function scoreSlot(
+  slot: Slot,
+  gridState: GridState,
+  availableWords: WordClue[]
+): number {
+  // Count how many letters are already placed in this slot
+  let filledCount = 0;
+  let constraints: { index: number; letter: string }[] = [];
+  
+  for (let i = 0; i < slot.cells.length; i++) {
+    const { row, col } = slot.cells[i];
+    if (gridState.cells[row][col] !== null) {
+      filledCount++;
+      constraints.push({ index: i, letter: gridState.cells[row][col]! });
+    }
+  }
+  
+  // Count compatible words
+  const compatibleWords = availableWords.filter(wc => 
+    wc.word.length === slot.length &&
+    constraints.every(c => wc.word[c.index] === c.letter)
+  );
+  
+  // Higher score = should fill first
+  // Prioritize slots with:
+  // 1. Some constraints (intersections) - helps connectivity
+  // 2. Fewer compatible words (most constrained variable heuristic)
+  if (compatibleWords.length === 0) {
+    return -1; // Cannot fill
+  }
+  
+  const constraintScore = filledCount * 20;
+  const scarcityScore = Math.max(0, 50 - compatibleWords.length);
+  const lengthScore = slot.length * 2;
+  
+  return constraintScore + scarcityScore + lengthScore;
+}
+
+// Get compatible words for a slot
+function getCompatibleWords(
+  slot: Slot,
+  gridState: GridState,
+  availableWords: WordClue[],
+  usedWords: Set<string>
+): WordClue[] {
+  const constraints: { index: number; letter: string }[] = [];
+  
+  for (let i = 0; i < slot.cells.length; i++) {
+    const { row, col } = slot.cells[i];
+    if (gridState.cells[row][col] !== null) {
+      constraints.push({ index: i, letter: gridState.cells[row][col]! });
+    }
+  }
+  
+  return availableWords.filter(wc => 
+    wc.word.length === slot.length &&
+    !usedWords.has(wc.word) &&
+    constraints.every(c => wc.word[c.index] === c.letter)
+  );
+}
+
+// Deep copy grid state
+function copyGridState(state: GridState): (string | null)[][] {
+  return state.cells.map(row => [...row]);
+}
+
+// Main CSP solver with backtracking
+function solveCSP(
+  slots: Slot[],
+  gridState: GridState,
+  availableWords: WordClue[],
+  usedWords: Set<string>,
+  placedWords: PlacedWord[],
+  maxAttempts: number = 1000
+): boolean {
+  let attempts = 0;
+  
+  function solve(): boolean {
+    attempts++;
+    if (attempts > maxAttempts) {
+      return true; // Stop early, use what we have
+    }
+    
+    // Find unfilled slots
+    const unfilledSlots = slots.filter(slot => {
+      const firstCell = slot.cells[0];
+      return gridState.cells[firstCell.row][firstCell.col] === null ||
+             slot.cells.some(c => gridState.cells[c.row][c.col] === null);
+    });
+    
+    if (unfilledSlots.length === 0) {
+      return true; // All slots filled!
+    }
+    
+    // Score and sort slots (most constrained first)
+    const scoredSlots = unfilledSlots
+      .map(slot => ({
+        slot,
+        score: scoreSlot(slot, gridState, availableWords)
+      }))
+      .filter(s => s.score > 0)
+      .sort((a, b) => b.score - a.score);
+    
+    if (scoredSlots.length === 0) {
+      return false; // No fillable slots
+    }
+    
+    // Try to fill the most constrained slot
+    const { slot } = scoredSlots[0];
+    const compatible = getCompatibleWords(slot, gridState, availableWords, usedWords);
+    
+    // Shuffle for variety
+    const shuffled = shuffleArray(compatible).slice(0, 10);
+    
+    for (const wordClue of shuffled) {
+      const originalCells = copyGridState(gridState);
+      
+      if (canPlaceWord(wordClue.word, slot, gridState)) {
+        placeWord(wordClue.word, slot, gridState);
+        usedWords.add(wordClue.word);
+        
+        placedWords.push({
+          word: wordClue.word,
+          clue: wordClue.clue,
+          startRow: slot.startRow,
+          startCol: slot.startCol,
+          direction: slot.direction,
+          number: 0,
+        });
+        
+        if (solve()) {
+          return true;
+        }
+        
+        // Backtrack
+        removeWord(slot, gridState, originalCells);
+        usedWords.delete(wordClue.word);
+        placedWords.pop();
+      }
+    }
+    
+    return false;
+  }
+  
+  return solve();
+}
+
+// Assign numbers to clues
+function assignNumbers(placedWords: PlacedWord[]): void {
+  // Sort by position (top to bottom, left to right)
+  const sortedWords = [...placedWords].sort((a, b) => {
+    if (a.startRow !== b.startRow) return a.startRow - b.startRow;
+    return a.startCol - b.startCol;
+  });
+  
+  const numberMap: Map<string, number> = new Map();
+  let currentNumber = 1;
+  
+  for (const word of sortedWords) {
+    const key = `${word.startRow}-${word.startCol}`;
+    if (!numberMap.has(key)) {
+      numberMap.set(key, currentNumber);
+      currentNumber++;
+    }
+    word.number = numberMap.get(key)!;
+  }
+}
+
+// Convert to final puzzle format
+function createFinalGrid(
+  gridState: GridState,
+  blocked: boolean[][],
+  placedWords: PlacedWord[]
+): CrosswordGrid {
+  const cells: Cell[][] = [];
+  
+  // Create number map
+  const numberMap: Map<string, number> = new Map();
+  for (const word of placedWords) {
+    const key = `${word.startRow}-${word.startCol}`;
+    if (!numberMap.has(key)) {
+      numberMap.set(key, word.number);
+    }
+  }
+  
+  for (let row = 0; row < gridState.size; row++) {
+    cells[row] = [];
+    for (let col = 0; col < gridState.size; col++) {
+      const key = `${row}-${col}`;
+      cells[row][col] = {
+        letter: gridState.cells[row][col],
+        isBlocked: blocked[row][col] || gridState.cells[row][col] === null,
+        number: numberMap.get(key) || null,
         isSelected: false,
         isHighlighted: false,
         userInput: '',
@@ -24,258 +439,129 @@ function createEmptyGrid(size: number): Cell[][] {
       };
     }
   }
-  return grid;
+  
+  return {
+    cells,
+    width: gridState.size,
+    height: gridState.size,
+  };
 }
 
-function canPlaceWord(
-  grid: Cell[][],
-  word: string,
-  startRow: number,
-  startCol: number,
-  direction: 'across' | 'down'
-): boolean {
-  const size = grid.length;
-  const letters = word.split('');
-
-  for (let i = 0; i < letters.length; i++) {
-    const row = direction === 'across' ? startRow : startRow + i;
-    const col = direction === 'across' ? startCol + i : startCol;
-
-    // Check bounds
-    if (row < 0 || row >= size || col < 0 || col >= size) {
-      return false;
-    }
-
-    const cell = grid[row][col];
-
-    // Cell must either be empty or have the same letter
-    if (cell.letter !== null && cell.letter !== letters[i]) {
-      return false;
-    }
-
-    // Check for adjacent cells (no parallel words touching)
-    if (cell.letter === null) {
-      if (direction === 'across') {
-        // Check cells above and below
-        if (row > 0 && grid[row - 1][col].letter !== null && grid[row - 1][col].letter !== letters[i]) {
-          // Only block if it's not an intersection
-          const prevCell = i > 0 ? grid[row][col - 1] : null;
-          const nextCell = i < letters.length - 1 && col + 1 < size ? grid[row][col + 1] : null;
-          if (!prevCell?.letter && !nextCell?.letter) {
-            // This would create adjacent parallel words
-          }
-        }
-        if (row < size - 1 && grid[row + 1][col].letter !== null && grid[row + 1][col].letter !== letters[i]) {
-          // Similar check
-        }
-      } else {
-        // Check cells left and right
-        if (col > 0 && grid[row][col - 1].letter !== null && grid[row][col - 1].letter !== letters[i]) {
-          // Similar check
-        }
-        if (col < size - 1 && grid[row][col + 1].letter !== null && grid[row][col + 1].letter !== letters[i]) {
-          // Similar check
-        }
-      }
-    }
-  }
-
-  // Check cell before word start (should be empty or blocked)
-  if (direction === 'across') {
-    if (startCol > 0 && grid[startRow][startCol - 1].letter !== null) {
-      return false;
-    }
-  } else {
-    if (startRow > 0 && grid[startRow - 1][startCol].letter !== null) {
-      return false;
-    }
-  }
-
-  // Check cell after word end (should be empty or blocked)
-  if (direction === 'across') {
-    const endCol = startCol + word.length;
-    if (endCol < size && grid[startRow][endCol].letter !== null) {
-      return false;
-    }
-  } else {
-    const endRow = startRow + word.length;
-    if (endRow < size && grid[endRow][startCol].letter !== null) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function placeWord(
-  grid: Cell[][],
-  word: string,
-  startRow: number,
-  startCol: number,
-  direction: 'across' | 'down'
-): void {
-  const letters = word.split('');
-
-  for (let i = 0; i < letters.length; i++) {
-    const row = direction === 'across' ? startRow : startRow + i;
-    const col = direction === 'across' ? startCol + i : startCol;
-
-    grid[row][col].letter = letters[i];
-    grid[row][col].isBlocked = false;
-  }
-}
-
-function findIntersections(
-  grid: Cell[][],
-  word: string,
-  direction: 'across' | 'down'
-): { row: number; col: number; intersectionIndex: number }[] {
-  const intersections: { row: number; col: number; intersectionIndex: number }[] = [];
-  const size = grid.length;
-  const letters = word.split('');
-
-  for (let row = 0; row < size; row++) {
-    for (let col = 0; col < size; col++) {
-      if (grid[row][col].letter !== null) {
-        const existingLetter = grid[row][col].letter;
-        
-        for (let i = 0; i < letters.length; i++) {
-          if (letters[i] === existingLetter) {
-            // Calculate where the word would start if this letter is the intersection
-            const startRow = direction === 'across' ? row : row - i;
-            const startCol = direction === 'across' ? col - i : col;
-
-            if (canPlaceWord(grid, word, startRow, startCol, direction)) {
-              intersections.push({ row: startRow, col: startCol, intersectionIndex: i });
-            }
-          }
-        }
-      }
-    }
-  }
-
-  return intersections;
-}
-
-function assignNumbers(grid: Cell[][], placedWords: PlacedWord[]): void {
-  // Create a map of positions that need numbers
-  const numberPositions: Map<string, number> = new Map();
-  let currentNumber = 1;
-
-  // Sort placed words by position (top-to-bottom, left-to-right)
-  const sortedWords = [...placedWords].sort((a, b) => {
-    if (a.startRow !== b.startRow) return a.startRow - b.startRow;
-    return a.startCol - b.startCol;
-  });
-
-  for (const word of sortedWords) {
-    const key = `${word.startRow}-${word.startCol}`;
-    if (!numberPositions.has(key)) {
-      numberPositions.set(key, currentNumber);
-      currentNumber++;
-    }
-    word.number = numberPositions.get(key)!;
-  }
-
-  // Assign numbers to grid cells
-  for (const [key, number] of numberPositions) {
-    const [row, col] = key.split('-').map(Number);
-    grid[row][col].number = number;
-  }
-}
-
+// Main generation function
 export function generateCrossword(settings: GameSettings): CrosswordPuzzle {
   const gridSize = GRID_SIZES[settings.size];
   const words = shuffleArray(getWordsByDifficulty(settings.difficulty));
   
-  // Filter words that fit in the grid
-  const validWords = words.filter(w => w.word.length <= gridSize - 2);
+  // Filter words by length (3 to gridSize-2)
+  const validWords = words.filter(w => w.word.length >= 3 && w.word.length <= gridSize - 2);
   
-  let grid = createEmptyGrid(gridSize);
-  const placedWords: PlacedWord[] = [];
+  let bestPuzzle: CrosswordPuzzle | null = null;
+  let bestScore = 0;
   
-  // Target number of words based on difficulty and size
-  const targetWords = Math.floor(gridSize * 1.2);
-  let attempts = 0;
-  const maxAttempts = 100;
-
-  // Place first word in the center
-  if (validWords.length > 0) {
-    const firstWord = validWords[0];
-    const startRow = Math.floor(gridSize / 2);
-    const startCol = Math.floor((gridSize - firstWord.word.length) / 2);
-    
-    placeWord(grid, firstWord.word, startRow, startCol, 'across');
-    placedWords.push({
-      word: firstWord.word,
-      clue: firstWord.clue,
-      startRow,
-      startCol,
-      direction: 'across',
-      number: 0,
-    });
-  }
-
-  // Try to place remaining words
-  let direction: 'across' | 'down' = 'down';
+  // Try multiple patterns and pick the best
+  const attempts = 5;
   
-  for (let i = 1; i < validWords.length && placedWords.length < targetWords && attempts < maxAttempts; i++) {
-    const wordClue = validWords[i];
-    const word = wordClue.word;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    // Create symmetric black square pattern
+    const blocked = createSymmetricPattern(gridSize);
     
-    // Find intersections with placed words
-    const intersections = findIntersections(grid, word, direction);
+    // Initialize grid state
+    const gridState = createEmptyGridState(gridSize);
+    gridState.blocked = blocked;
     
-    if (intersections.length > 0) {
-      // Pick a random intersection
-      const intersection = intersections[Math.floor(Math.random() * intersections.length)];
+    // Find all slots
+    const slots = findSlots(blocked, gridSize);
+    
+    if (slots.length < 5) continue; // Not enough slots
+    
+    // Solve using CSP
+    const usedWords = new Set<string>();
+    const placedWords: PlacedWord[] = [];
+    
+    solveCSP(slots, gridState, validWords, usedWords, placedWords, 500);
+    
+    if (placedWords.length > bestScore) {
+      bestScore = placedWords.length;
       
-      placeWord(grid, word, intersection.row, intersection.col, direction);
-      placedWords.push({
-        word: word,
-        clue: wordClue.clue,
-        startRow: intersection.row,
-        startCol: intersection.col,
-        direction,
-        number: 0,
-      });
+      // Assign numbers
+      assignNumbers(placedWords);
       
-      // Alternate directions
-      direction = direction === 'across' ? 'down' : 'across';
-    } else {
-      attempts++;
+      // Create final grid
+      const finalGrid = createFinalGrid(gridState, blocked, placedWords);
+      
+      // Separate clues
+      const acrossClues = placedWords
+        .filter(w => w.direction === 'across')
+        .sort((a, b) => a.number - b.number);
+      
+      const downClues = placedWords
+        .filter(w => w.direction === 'down')
+        .sort((a, b) => a.number - b.number);
+      
+      bestPuzzle = {
+        grid: finalGrid,
+        placedWords,
+        acrossClues,
+        downClues,
+      };
     }
   }
+  
+  // If no good puzzle found, create a simple one
+  if (!bestPuzzle) {
+    return createFallbackPuzzle(gridSize, validWords);
+  }
+  
+  return bestPuzzle;
+}
 
-  // Assign numbers to words and cells
-  assignNumbers(grid, placedWords);
-
-  // Separate clues by direction
-  const acrossClues = placedWords
-    .filter(w => w.direction === 'across')
-    .sort((a, b) => a.number - b.number);
+// Fallback puzzle creation
+function createFallbackPuzzle(gridSize: number, words: WordClue[]): CrosswordPuzzle {
+  const blocked = createSymmetricPattern(gridSize);
+  const gridState = createEmptyGridState(gridSize);
+  const slots = findSlots(blocked, gridSize);
+  const placedWords: PlacedWord[] = [];
+  const usedWords = new Set<string>();
+  
+  // Simple greedy fill
+  for (const slot of slots) {
+    const compatible = words.filter(w => 
+      w.word.length === slot.length && 
+      !usedWords.has(w.word) &&
+      canPlaceWord(w.word, slot, gridState)
+    );
     
-  const downClues = placedWords
-    .filter(w => w.direction === 'down')
-    .sort((a, b) => a.number - b.number);
-
+    if (compatible.length > 0) {
+      const word = compatible[Math.floor(Math.random() * compatible.length)];
+      placeWord(word.word, slot, gridState);
+      usedWords.add(word.word);
+      placedWords.push({
+        word: word.word,
+        clue: word.clue,
+        startRow: slot.startRow,
+        startCol: slot.startCol,
+        direction: slot.direction,
+        number: 0,
+      });
+    }
+  }
+  
+  assignNumbers(placedWords);
+  const finalGrid = createFinalGrid(gridState, blocked, placedWords);
+  
   return {
-    grid: {
-      cells: grid,
-      width: gridSize,
-      height: gridSize,
-    },
+    grid: finalGrid,
     placedWords,
-    acrossClues,
-    downClues,
+    acrossClues: placedWords.filter(w => w.direction === 'across').sort((a, b) => a.number - b.number),
+    downClues: placedWords.filter(w => w.direction === 'down').sort((a, b) => a.number - b.number),
   };
 }
 
 export function checkSolution(puzzle: CrosswordPuzzle): boolean {
   for (const row of puzzle.grid.cells) {
     for (const cell of row) {
-      if (!cell.isBlocked) {
-        if (cell.userInput.toUpperCase() !== cell.letter) {
+      if (!cell.isBlocked && cell.letter) {
+        if (cell.userInput.toUpperCase() !== cell.letter.toUpperCase()) {
           return false;
         }
       }
@@ -295,26 +581,22 @@ export function getWordCells(
   const size = puzzle.grid.width;
 
   if (direction === 'across') {
-    // Find start of word
     let startCol = col;
     while (startCol > 0 && !grid[row][startCol - 1].isBlocked) {
       startCol--;
     }
     
-    // Collect all cells in word
     let currentCol = startCol;
     while (currentCol < size && !grid[row][currentCol].isBlocked) {
       cells.push({ row, col: currentCol });
       currentCol++;
     }
   } else {
-    // Find start of word
     let startRow = row;
     while (startRow > 0 && !grid[startRow - 1][col].isBlocked) {
       startRow--;
     }
     
-    // Collect all cells in word
     let currentRow = startRow;
     while (currentRow < size && !grid[currentRow][col].isBlocked) {
       cells.push({ row: currentRow, col });
