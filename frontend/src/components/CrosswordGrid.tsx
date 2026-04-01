@@ -1,6 +1,5 @@
-// Enhanced Crossword Grid Component
-import React, { useRef, useCallback } from 'react';
-import { View, StyleSheet, Dimensions, TextInput, ScrollView } from 'react-native';
+import React, { useRef, useEffect } from 'react';
+import { View, StyleSheet, Dimensions, TextInput, Keyboard, Platform, ScrollView } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CrosswordPuzzle, Cell } from '../types';
@@ -12,6 +11,7 @@ interface CrosswordGridProps {
   highlightedCells: { row: number; col: number }[];
   onCellPress: (row: number, col: number) => void;
   onCellChange: (row: number, col: number, value: string) => void;
+  onBackspace: () => void;
 }
 
 export const CrosswordGrid: React.FC<CrosswordGridProps> = ({
@@ -20,85 +20,125 @@ export const CrosswordGrid: React.FC<CrosswordGridProps> = ({
   highlightedCells,
   onCellPress,
   onCellChange,
+  onBackspace,
 }) => {
-  const inputRefs = useRef<Map<string, React.RefObject<TextInput>>>(new Map());
+  const hiddenInputRef = useRef<TextInput>(null);
+  
   const screenWidth = Dimensions.get('window').width;
   const gridPadding = 24;
   const gridSize = puzzle.grid.width;
-  const maxGridWidth = screenWidth - gridPadding * 2 - 32;
-  const cellSize = Math.floor(maxGridWidth / gridSize);
+  
+  // Calculate cell size so it fits the screen, but give it a minimum size so it doesn't get too small
+  const minCellSize = 32; 
+  const calculatedCellSize = Math.floor((screenWidth - gridPadding * 2) / gridSize);
+  const cellSize = Math.max(calculatedCellSize, minCellSize);
 
-  const getInputRef = useCallback((row: number, col: number) => {
-    const key = `${row}-${col}`;
-    if (!inputRefs.current.has(key)) {
-      inputRefs.current.set(key, React.createRef<TextInput>());
+  // Automatically focus the hidden input when a cell is selected
+  useEffect(() => {
+    if (selectedCell) {
+      hiddenInputRef.current?.focus();
+    } else {
+      Keyboard.dismiss();
     }
-    return inputRefs.current.get(key)!;
-  }, []);
-
-  const isHighlighted = useCallback((row: number, col: number) => {
-    return highlightedCells.some(c => c.row === row && c.col === col);
-  }, [highlightedCells]);
-
-  const isSelected = useCallback((row: number, col: number) => {
-    return selectedCell?.row === row && selectedCell?.col === col;
   }, [selectedCell]);
 
-  const renderCell = useCallback((cell: Cell, row: number, col: number) => {
-    const cellWithState = {
-      ...cell,
-      isSelected: isSelected(row, col),
-      isHighlighted: isHighlighted(row, col),
-    };
+  const handleCellPress = (row: number, col: number) => {
+    onCellPress(row, col);
+  };
 
-    return (
-      <CrosswordCell
-        key={`${row}-${col}`}
-        cell={cellWithState}
-        size={cellSize}
-        onPress={() => onCellPress(row, col)}
-        onChangeText={(text) => onCellChange(row, col, text)}
-        inputRef={getInputRef(row, col)}
-      />
-    );
-  }, [cellSize, isSelected, isHighlighted, onCellPress, onCellChange, getInputRef]);
+  const handleKeyPress = (e: any) => {
+    if (e.nativeEvent.key === 'Backspace') {
+      onBackspace();
+    }
+  };
+
+  const handleChangeText = (text: string) => {
+    if (selectedCell && text.length > 0) {
+      // Pass only the last character in case of rapid typing
+      onCellChange(selectedCell.row, selectedCell.col, text.slice(-1));
+    }
+  };
+
+  // Determine current value to reset input text to allow repeated characters and backspace handling
+  const currentValue = selectedCell ? puzzle.grid.cells[selectedCell.row][selectedCell.col].userInput : '';
 
   return (
-    <ScrollView 
-      horizontal 
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.scrollContainer}
-    >
+    <View style={styles.container}>
       <ScrollView 
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContainer}
+        horizontal 
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContainerHorizontal}
+        bounces={false}
       >
-        <View style={styles.gridWrapper}>
-          <BlurView intensity={20} tint="dark" style={styles.gridBlur}>
-            <LinearGradient
-              colors={['rgba(255,255,255,0.08)', 'rgba(255,255,255,0.02)']}
-              style={styles.gridGradient}
-            >
-              <View style={styles.grid}>
-                {puzzle.grid.cells.map((row, rowIndex) => (
-                  <View key={rowIndex} style={styles.row}>
-                    {row.map((cell, colIndex) => renderCell(cell, rowIndex, colIndex))}
-                  </View>
-                ))}
-              </View>
-            </LinearGradient>
-          </BlurView>
-        </View>
+        <ScrollView 
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContainerVertical}
+          bounces={false}
+        >
+          <View style={styles.gridWrapper}>
+            <BlurView intensity={20} tint="dark" style={styles.gridBlur}>
+              <LinearGradient
+                colors={['rgba(255,255,255,0.08)', 'rgba(255,255,255,0.02)']}
+                style={styles.gridGradient}
+              >
+                <View style={styles.grid}>
+                  {puzzle.grid.cells.map((row, rowIndex) => (
+                    <View key={rowIndex} style={styles.row}>
+                      {row.map((cell, colIndex) => (
+                        <CrosswordCell
+                          key={`${rowIndex}-${colIndex}`}
+                          cell={{
+                            ...cell,
+                            isSelected: selectedCell?.row === rowIndex && selectedCell?.col === colIndex,
+                            isHighlighted: highlightedCells.some(c => c.row === rowIndex && c.col === colIndex),
+                          }}
+                          size={cellSize}
+                          onPress={() => handleCellPress(rowIndex, colIndex)}
+                        />
+                      ))}
+                    </View>
+                  ))}
+                </View>
+              </LinearGradient>
+            </BlurView>
+          </View>
+        </ScrollView>
       </ScrollView>
-    </ScrollView>
+
+      {/* Hidden Global TextInput for the Grid */}
+      <TextInput
+        ref={hiddenInputRef}
+        style={styles.hiddenInput}
+        autoCapitalize="characters"
+        autoCorrect={false}
+        autoComplete="off"
+        spellCheck={false}
+        value={currentValue}
+        onChangeText={handleChangeText}
+        onKeyPress={handleKeyPress}
+        caretHidden={true}
+        showSoftInputOnFocus={true}
+        maxLength={2} // Allow space for the next typed char before it gets reset
+      />
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  scrollContainer: {
-    flexGrow: 1,
+  container: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  scrollContainerHorizontal: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  scrollContainerVertical: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingVertical: 12,
   },
   gridWrapper: {
     borderRadius: 16,
@@ -117,5 +157,12 @@ const styles = StyleSheet.create({
   },
   row: {
     flexDirection: 'row',
+  },
+  hiddenInput: {
+    position: 'absolute',
+    width: 1,
+    height: 1,
+    opacity: 0,
+    top: -1000,
   },
 });

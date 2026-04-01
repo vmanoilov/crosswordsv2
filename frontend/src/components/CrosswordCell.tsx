@@ -1,6 +1,5 @@
-// Enhanced Crossword Cell Component
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, TextInput } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Cell } from '../types';
 
@@ -8,16 +7,12 @@ interface CrosswordCellProps {
   cell: Cell;
   size: number;
   onPress: () => void;
-  onChangeText: (text: string) => void;
-  inputRef?: React.RefObject<TextInput>;
 }
 
-export const CrosswordCell: React.FC<CrosswordCellProps> = ({
+const CrosswordCellComponent: React.FC<CrosswordCellProps> = ({
   cell,
   size,
   onPress,
-  onChangeText,
-  inputRef,
 }) => {
   if (cell.isBlocked) {
     return (
@@ -73,24 +68,34 @@ export const CrosswordCell: React.FC<CrosswordCellProps> = ({
             {cell.number}
           </Text>
         )}
-        <TextInput
-          ref={inputRef}
-          style={[
-            styles.letter,
-            { fontSize: Math.max(12, size * 0.45) },
-            (cell.isSelected || cell.isHighlighted) && styles.highlightedLetter,
-          ]}
-          value={cell.userInput}
-          onChangeText={(text) => onChangeText(text.toUpperCase().slice(-1))}
-          maxLength={1}
-          autoCapitalize="characters"
-          onFocus={onPress}
-          selectTextOnFocus
-        />
+        <View style={styles.textContainer}>
+          <Text 
+            style={[
+              styles.letter,
+              { fontSize: Math.max(12, size * 0.45) },
+              (cell.isSelected || cell.isHighlighted) && styles.highlightedLetter,
+            ]}
+          >
+            {cell.userInput}
+          </Text>
+        </View>
       </LinearGradient>
     </TouchableOpacity>
   );
 };
+
+// Memoize to prevent re-rendering 225 cells on every keystroke
+export const CrosswordCell = React.memo(CrosswordCellComponent, (prevProps, nextProps) => {
+  return (
+    prevProps.size === nextProps.size &&
+    prevProps.cell.isBlocked === nextProps.cell.isBlocked &&
+    prevProps.cell.isSelected === nextProps.cell.isSelected &&
+    prevProps.cell.isHighlighted === nextProps.cell.isHighlighted &&
+    prevProps.cell.userInput === nextProps.cell.userInput &&
+    prevProps.cell.isCorrect === nextProps.cell.isCorrect &&
+    prevProps.cell.number === nextProps.cell.number
+  );
+});
 
 const styles = StyleSheet.create({
   cell: {
@@ -119,14 +124,18 @@ const styles = StyleSheet.create({
     color: 'rgba(0,0,0,0.6)',
     fontWeight: '700',
   },
+  textContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+    height: '100%',
+  },
   letter: {
     color: '#1a1a2e',
     fontWeight: '800',
     textAlign: 'center',
-    width: '100%',
-    height: '100%',
-    padding: 0,
-    margin: 0,
+    includeFontPadding: false,
   },
   highlightedLetter: {
     color: '#fff',
