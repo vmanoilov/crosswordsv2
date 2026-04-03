@@ -1,0 +1,28 @@
+{
+  "skills": [
+    {
+      "source": "aradotso/trending-skills",
+      "skills": [
+        "agency-agents-ai-specialists"
+      ]
+    },
+    {
+      "source": "dpconde/claude-android-skill",
+      "skills": [
+        "android-development"
+      ]
+    },
+    {
+      "source": "hyperb1iss/hyperskills",
+      "skills": [
+        "orchestrate"
+      ]
+    },
+    {
+      "source": "peterfile/devpilot-agents",
+      "skills": [
+        "multi-agent-orchestration"
+      ]
+    }
+  ]
+}
